@@ -1,0 +1,465 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TriEmu 2.0</title>
+
+<style>
+* { box-sizing:border-box; }
+
+body {
+  margin:0;
+  background:#10121c;
+  color:white;
+  font-family:Arial,sans-serif;
+}
+
+header {
+  padding:20px;
+  background:#20243a;
+  text-align:center;
+}
+
+h1 { color:#8d9cff; }
+
+main {
+  max-width:1000px;
+  margin:auto;
+  padding:18px;
+}
+
+button,select,input {
+  padding:12px;
+  margin:5px;
+  border:0;
+  border-radius:8px;
+}
+
+button {
+  background:#687cff;
+  color:white;
+  cursor:pointer;
+}
+
+button:hover { background:#8998ff; }
+
+.panel {
+  background:#20243a;
+  padding:15px;
+  border-radius:12px;
+  margin:15px 0;
+}
+
+#library {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(130px,1fr));
+  gap:12px;
+}
+
+.game-card {
+  background:#303650;
+  padding:10px;
+  border-radius:10px;
+  cursor:pointer;
+  overflow:hidden;
+}
+
+.game-card img {
+  width:100%;
+  aspect-ratio:1;
+  object-fit:cover;
+  border-radius:7px;
+}
+
+#game {
+  background:black;
+  height:550px;
+  border-radius:12px;
+  overflow:hidden;
+}
+
+#game iframe {
+  width:100%;
+  height:100%;
+  border:0;
+}
+
+#status {
+  color:#aeb8ff;
+}
+
+.ds-message { display:none; }
+
+body.ds-mode .ds-message {
+  display:block;
+}
+
+body.ds-mode #game {
+  height:65vh;
+  min-height:300px;
+}
+
+@media (orientation:portrait) {
+  body.ds-mode .ds-message {
+    display:block;
+    background:#303650;
+    padding:12px;
+    border-radius:10px;
+  }
+}
+
+@media (orientation:landscape) {
+  body.ds-mode #game {
+    height:75vh;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <h1>TriEmu 2.0</h1>
+  <p>N64 • Nintendo DS • SNES</p>
+  <small>Three systems. One browser.</small>
+</header>
+
+<main>
+
+<section class="panel">
+  <h2>Game Library</h2>
+
+  <div id="library">
+    <p>Your library is empty.</p>
+  </div>
+
+  <hr>
+
+  <h3>Add a game</h3>
+
+  <input type="file" id="rom"
+    accept=".z64,.n64,.v64,.nds,.sfc,.smc,.zip">
+
+  <select id="system">
+    <option value="n64">Nintendo 64</option>
+    <option value="nds">Nintendo DS</option>
+    <option value="snes">SNES</option>
+  </select>
+
+  <input type="file" id="cover" accept="image/*">
+
+  <button onclick="addGame()">Add to Library</button>
+</section>
+
+<section class="panel">
+  <h2>Console Settings</h2>
+
+  <label>Volume</label>
+  <input type="range" id="volume"
+    min="0" max="100" value="70">
+
+  <br>
+
+  <label>Emulator theme</label>
+  <input type="color" id="theme" value="#687cff">
+
+  <button onclick="saveSettings()">Save Settings</button>
+</section>
+
+<section class="panel">
+  <h2>Now Playing</h2>
+
+  <p id="status">Waiting for a game...</p>
+
+  <div class="ds-message">
+    <h3>DS LANDSCAPE MODE</h3>
+    Rotate your phone horizontally!
+
+    <br>
+
+    <button onclick="rotatePhone()">
+      Enter Landscape
+    </button>
+  </div>
+
+  <div id="game"></div>
+
+  <br>
+
+  <button onclick="fullscreen()">Fullscreen</button>
+  <button onclick="stopGame()">Stop Game</button>
+</section>
+
+<section class="panel">
+  <h2>Emulator Features</h2>
+  <ul>
+    <li>Save states and load states</li>
+    <li>Local battery saves</li>
+    <li>Keyboard mapping</li>
+    <li>Controller support</li>
+    <li>Touchscreen controls</li>
+    <li>DS dual-screen rendering</li>
+    <li>Fullscreen gameplay</li>
+  </ul>
+  <p>Save and controller tools are provided by the emulator's native toolbar.</p>
+</section>
+
+</main>
+
+<script>
+const DATA =
+ "https://cdn.emulatorjs.org/stable/data/";
+
+const dbRequest = indexedDB.open("TriEmuDB",1);
+
+let db;
+let currentURL = null;
+let currentSystem = null;
+
+dbRequest.onupgradeneeded = event => {
+  const database = event.target.result;
+
+  database.createObjectStore("games", {
+    keyPath:"id",
+    autoIncrement:true
+  });
+};
+
+dbRequest.onsuccess = event => {
+  db = event.target.result;
+  showLibrary();
+};
+
+dbRequest.onerror = () => {
+  status("Could not open local game library.");
+};
+
+function status(message) {
+  document.getElementById("status").textContent =
+    message;
+}
+
+function addGame() {
+  const file = document.getElementById("rom").files[0];
+  const system = document.getElementById("system").value;
+  const cover = document.getElementById("cover").files[0];
+
+  if (!file || !db) {
+    alert("Choose a game first.");
+    return;
+  }
+
+  if (system === "nds" && !file.name.toLowerCase().endsWith(".nds")) {
+    alert("Choose an NDS file.");
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    const transaction = db.transaction("games","readwrite");
+
+    transaction.objectStore("games").add({
+      name:file.name,
+      system:system,
+      data:reader.result,
+      cover:cover ? null : null
+    });
+
+    transaction.oncomplete = () => {
+      showLibrary();
+      status("Game added to library!");
+    };
+  };
+
+  reader.readAsArrayBuffer(file);
+}
+
+function showLibrary() {
+  if (!db) return;
+
+  const library = document.getElementById("library");
+  library.innerHTML = "";
+
+  const transaction = db.transaction("games","readonly");
+  const request = transaction.objectStore("games").getAll();
+
+  request.onsuccess = () => {
+    const games = request.result;
+
+    if (!games.length) {
+      library.innerHTML = "<p>Your library is empty.</p>";
+      return;
+    }
+
+    games.forEach(game => {
+      const card = document.createElement("div");
+      card.className = "game-card";
+
+      const title = document.createElement("strong");
+      title.textContent = game.name;
+
+      const system = document.createElement("p");
+      system.textContent = game.system.toUpperCase();
+
+      const play = document.createElement("button");
+      play.textContent = "Play";
+      play.onclick = () => launchGame(game);
+
+      const remove = document.createElement("button");
+      remove.textContent = "Remove";
+      remove.onclick = () => deleteGame(game.id);
+
+      card.append(title,system,play,remove);
+      library.appendChild(card);
+    });
+  };
+}
+
+function deleteGame(id) {
+  const transaction = db.transaction("games","readwrite");
+  transaction.objectStore("games").delete(id);
+  transaction.oncomplete = showLibrary;
+}
+
+function launchGame(game) {
+  stopGame();
+
+  currentSystem = game.system;
+
+  if (currentSystem === "nds") {
+    document.body.classList.add("ds-mode");
+
+    if (screen.orientation &&
+        screen.orientation.lock) {
+      screen.orientation.lock("landscape").catch(() => {});
+    }
+  } else {
+    document.body.classList.remove("ds-mode");
+  }
+
+  currentURL = URL.createObjectURL(
+    new Blob([game.data])
+  );
+
+  const settings = JSON.parse(
+    localStorage.getItem("TriEmuSettings") || "{}"
+  );
+
+  const config = {
+    core:game.system,
+    name:game.name,
+    url:currentURL,
+    volume:(settings[game.system]?.volume ?? 70)/100,
+    color:settings[game.system]?.theme || "#687cff"
+  };
+
+  const iframe = document.createElement("iframe");
+
+  const html = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta name="viewport"
+      content="width=device-width, initial-scale=1">
+    <style>
+      html,body,#game {
+        margin:0;
+        width:100%;
+        height:100%;
+        background:black;
+        overflow:hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <script>
+      EJS_player="#game";
+      EJS_core=${JSON.stringify(config.core)};
+      EJS_gameUrl=${JSON.stringify(config.url)};
+      EJS_gameName=${JSON.stringify(config.name)};
+      EJS_pathtodata=${JSON.stringify(DATA)};
+      EJS_volume=${config.volume};
+      EJS_color=${JSON.stringify(config.color)};
+      EJS_controlScheme=${JSON.stringify(config.core)};
+      EJS_startOnLoaded=true;
+      EJS_Buttons={
+        saveState:true,
+        loadState:true,
+        saveSavFiles:true,
+        loadSavFiles:true,
+        fullscreen:true,
+        settings:true,
+        gamepad:true,
+        exitEmulation:true
+      };
+    <\/script>
+    <script src="${DATA}loader.js"><\/script>
+  </body>
+  </html>`;
+
+  iframe.srcdoc = html;
+
+  document.getElementById("game").replaceChildren(iframe);
+
+  status("Loading " + game.name + "...");
+}
+
+function saveSettings() {
+  const system = document.getElementById("system").value;
+
+  const settings = JSON.parse(
+    localStorage.getItem("TriEmuSettings") || "{}"
+  );
+
+  settings[system] = {
+    volume:Number(document.getElementById("volume").value),
+    theme:document.getElementById("theme").value
+  };
+
+  localStorage.setItem(
+    "TriEmuSettings",
+    JSON.stringify(settings)
+  );
+
+  status("Settings saved for " + system.toUpperCase());
+}
+
+function rotatePhone() {
+  if (screen.orientation?.lock) {
+    screen.orientation.lock("landscape")
+      .catch(() => alert("Please rotate your phone manually."));
+  } else {
+    alert("Please rotate your phone horizontally.");
+  }
+}
+
+function fullscreen() {
+  const iframe = document.querySelector("#game iframe");
+
+  if (iframe) {
+    iframe.requestFullscreen?.();
+  }
+}
+
+function stopGame() {
+  document.getElementById("game").innerHTML = "";
+
+  if (currentURL) {
+    URL.revokeObjectURL(currentURL);
+    currentURL = null;
+  }
+
+  document.body.classList.remove("ds-mode");
+
+  if (screen.orientation?.unlock) {
+    screen.orientation.unlock();
+  }
+}
+</script>
+
+</body>
+</html>
